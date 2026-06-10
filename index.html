@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airmail Dots — dots &amp; boxes by post</title>
+<meta name="description" content="A slow, friendly dots-and-boxes game for two people far apart. One link, play whenever.">
+<style>
+  :root{
+    --paper:#F3F6F9; --card:#FBFCFE; --ink:#20344E; --ink-soft:#5B6E86;
+    --ghost:rgba(32,52,78,.10); --red:#C94A3D; --blue:#3D63A8;
+    --red-soft:rgba(201,74,61,.14); --blue-soft:rgba(61,99,168,.14);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; min-height:100vh; background:var(--paper);
+    background-image:repeating-linear-gradient(0deg,transparent 0 27px,rgba(61,99,168,.05) 27px 28px);
+    color:var(--ink); font-family:Georgia,'Iowan Old Style','Times New Roman',serif;
+    display:flex; justify-content:center; padding:28px 14px 60px;
+  }
+  .col{width:100%;max-width:560px}
+  .frame{padding:9px;border-radius:4px;box-shadow:0 14px 34px rgba(32,52,78,.14);
+    background:repeating-linear-gradient(45deg,var(--red) 0 13px,var(--card) 13px 25px,var(--blue) 25px 38px,var(--card) 38px 50px)}
+  .card{background:var(--card);border-radius:2px;padding:26px 24px 30px;position:relative}
+  .mono{font-family:'Courier New',Courier,monospace;letter-spacing:.14em;text-transform:uppercase}
+  .eyebrow{font-size:11px;color:var(--ink-soft)}
+  h1.title{font-size:34px;font-style:italic;font-weight:400;margin:6px 0 2px;line-height:1.05}
+  .sub{color:var(--ink-soft);font-size:15px;margin:0 0 18px;font-style:italic}
+  .lbl{display:block;font-size:10px;color:var(--ink-soft);margin:14px 0 5px}
+  .inp{width:100%;padding:10px 12px;font-size:16px;color:var(--ink);
+    font-family:'Courier New',Courier,monospace;letter-spacing:.06em;
+    background:var(--paper);border:1px solid rgba(32,52,78,.25);border-radius:2px}
+  .inp:focus{outline:2px solid var(--blue);outline-offset:1px}
+  .btn{font-family:'Courier New',Courier,monospace;letter-spacing:.16em;text-transform:uppercase;
+    font-size:12px;padding:11px 18px;cursor:pointer;border-radius:2px;
+    border:1px solid var(--ink);background:var(--ink);color:var(--card);
+    transition:transform .12s ease,opacity .12s ease}
+  .btn:hover{opacity:.88}.btn:active{transform:translateY(1px)}
+  .btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  .btn.ghost{background:transparent;color:var(--ink)}
+  .btn.big{width:100%;padding:14px 18px;font-size:13px}
+  .btn:disabled{opacity:.4;cursor:default}
+  .hr{border:none;border-top:1px dashed rgba(32,52,78,.3);margin:22px 0}
+  .stamp{position:absolute;top:14px;right:14px;width:58px;height:70px;
+    border:1px dashed rgba(32,52,78,.45);border-radius:2px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:4px;color:var(--ink-soft);
+    background:var(--paper);transform:rotate(3deg);font-size:9px}
+  .stamp .plane{font-size:20px;color:var(--blue)}
+  .scores{display:flex;gap:12px;margin:16px 0 6px}
+  .sc{flex:1;border:1px solid rgba(32,52,78,.18);border-radius:2px;padding:10px 12px;background:var(--paper);position:relative}
+  .sc.active::after{content:"✒ to move";position:absolute;top:-9px;right:8px;background:var(--card);
+    padding:0 6px;font-size:9px;font-family:'Courier New',monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft)}
+  .scnum{font-size:28px;font-style:italic}
+  .status{font-size:13px;color:var(--ink-soft);font-style:italic;margin:6px 0 0}
+  .postcard{border:1px solid rgba(32,52,78,.18);background:var(--paper);border-radius:2px;padding:10px 12px;margin-top:8px}
+  .pc-meta{font-size:9px;color:var(--ink-soft);margin-bottom:4px}
+  .pc-text{font-size:15px;font-style:italic;overflow-wrap:anywhere}
+  .emojis{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .em{font-size:18px;background:var(--paper);border:1px solid rgba(32,52,78,.18);border-radius:2px;padding:4px 8px;cursor:pointer}
+  .em:hover{border-color:var(--ink)}
+  .board{margin:18px auto 6px;max-width:420px}
+  .err{color:var(--red);font-size:13px;margin-top:8px;font-style:italic}
+  .twocol{display:flex;gap:16px;flex-wrap:wrap}
+  .twocol>div{flex:1 1 200px}
+  .bigcode{font-size:34px;letter-spacing:.4em;margin:8px 0;color:var(--ink)}
+  .seal{animation:amFade .4s ease}
+  .pulse{animation:amPulse 2.4s ease-in-out infinite}
+  @keyframes amFade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @keyframes amPulse{0%,100%{opacity:.55}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){.seal{animation:none}.pulse{animation:none}.btn{transition:none}}
+</style>
+</head>
+<body>
+<div class="col"><div class="frame"><div class="card" id="app"></div></div></div>
+
+<script>
+(function(){
+"use strict";
+var SIZE=4, N_EDGES=2*SIZE*(SIZE+1), POLL_MS=4000;
+var PAL={1:{hex:"#C94A3D",soft:"var(--red-soft)"},2:{hex:"#3D63A8",soft:"var(--blue-soft)"}};
+var CODE_CHARS="ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+var app=document.getElementById("app");
+
+/* ------------ game rules ------------ */
+function boxEdges(r,c){return["h-"+r+"-"+c,"h-"+(r+1)+"-"+c,"v-"+r+"-"+c,"v-"+r+"-"+(c+1)];}
+function touching(t,r,c){
+  var o=[];
+  if(t==="h"){ if(r>0)o.push([r-1,c]); if(r<SIZE)o.push([r,c]); }
+  else { if(c>0)o.push([r,c-1]); if(c<SIZE)o.push([r,c]); }
+  return o;
+}
+function applyMove(st,t,r,c,p){
+  var k=t+"-"+r+"-"+c;
+  if(st.edges[k]||st.turn!==p||st.status!=="playing")return null;
+  var edges=Object.assign({},st.edges); edges[k]=p;
+  var boxes=Object.assign({},st.boxes); var scored=0;
+  touching(t,r,c).forEach(function(b){
+    var bk=b[0]+"-"+b[1];
+    if(!boxes[bk]&&boxEdges(b[0],b[1]).every(function(e){return edges[e];})){boxes[bk]=p;scored++;}
+  });
+  var done=Object.keys(edges).length===N_EDGES;
+  return Object.assign({},st,{edges:edges,boxes:boxes,lastEdge:k,
+    turn:scored?p:(p===1?2:1),status:done?"done":"playing",rev:st.rev+1});
+}
+function scoreOf(st,p){var n=0;Object.keys(st.boxes||{}).forEach(function(k){if(st.boxes[k]===p)n++;});return n;}
+function makeCode(){var c="";for(var i=0;i<4;i++)c+=CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)];return c;}
+function newGame(name){return{players:{1:{name:name},2:null},edges:{},boxes:{},lastEdge:null,
+  turn:1,status:"waiting",notes:[],round:1,rev:1};}
+
+/* ------------ API ------------ */
+function apiGet(code){
+  return fetch("/api/game?code="+encodeURIComponent(code)).then(function(r){
+    if(r.status===503) throw new Error("setup");
+    if(!r.ok) throw new Error("net");
+    return r.json();
+  }).then(function(j){return j.state;});
+}
+function apiSave(code,state){
+  return fetch("/api/game",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({code:code,state:state})}).then(function(r){
+    if(!r.ok) throw new Error("net"); return true;});
+}
+
+/* ------------ local memory (who am I in which game) ------------ */
+function remember(code,me,name){
+  try{localStorage.setItem("airmail:last",JSON.stringify({code:code,me:me,name:name}));}catch(e){}
+}
+function recall(){ try{return JSON.parse(localStorage.getItem("airmail:last"));}catch(e){return null;} }
+
+/* ------------ app state ------------ */
+var view="lobby", code="", me=null, game=null, err="", info="", pollTimer=null, lastNoteCount=0;
+
+function startPolling(){
+  stopPolling();
+  pollTimer=setInterval(function(){
+    if(document.hidden)return;
+    if(!code)return;
+    apiGet(code).then(function(g){
+      if(g&&(!game||g.rev>game.rev)){ game=g; render(); }
+    }).catch(function(){});
+  },POLL_MS);
+}
+function stopPolling(){ if(pollTimer){clearInterval(pollTimer);pollTimer=null;} }
+
+/* ------------ rendering ------------ */
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(ch){
+  return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch];});}
+function stamp(){return '<div class="stamp mono" aria-hidden="true"><span class="plane">✈</span><span>par avion</span></div>';}
+function inviteURL(){return location.origin+location.pathname+"#"+code;}
+
+function boardSVG(){
+  var pad=28,gap=72,W=pad*2+gap*SIZE;
+  function pos(i){return pad+i*gap;}
+  var myTurn=game.status==="playing"&&game.turn===me;
+  var s='<svg viewBox="0 0 '+W+' '+W+'" style="width:100%;display:block" role="img" aria-label="Dots and boxes board">';
+  Object.keys(game.boxes).forEach(function(k){
+    var p=game.boxes[k],rc=k.split("-"),r=+rc[0],c=+rc[1];
+    var nm=(game.players[p]&&game.players[p].name)||""; var init=nm?nm[0].toUpperCase():(p===1?"R":"B");
+    s+='<rect x="'+(pos(c)+4)+'" y="'+(pos(r)+4)+'" width="'+(gap-8)+'" height="'+(gap-8)+'" rx="2" fill="'+PAL[p].soft+'"/>';
+    s+='<rect x="'+(pos(c)+14)+'" y="'+(pos(r)+14)+'" width="'+(gap-28)+'" height="'+(gap-28)+'" fill="none" stroke="'+PAL[p].hex+'" stroke-width="1" stroke-dasharray="3 3" opacity=".7" rx="1"/>';
+    s+='<text x="'+(pos(c)+gap/2)+'" y="'+(pos(r)+gap/2+7)+'" text-anchor="middle" font-family="Georgia,serif" font-style="italic" font-size="22" fill="'+PAL[p].hex+'">'+esc(init)+'</text>';
+  });
+  ["h","v"].forEach(function(t){
+    var R=t==="h"?SIZE+1:SIZE, C=t==="h"?SIZE:SIZE+1;
+    for(var r=0;r<R;r++)for(var c=0;c<C;c++){
+      var x1=pos(c),y1=pos(r),x2=t==="h"?pos(c+1):x1,y2=t==="h"?y1:pos(r+1);
+      var k=t+"-"+r+"-"+c, owner=game.edges[k];
+      s+='<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+(owner?PAL[owner].hex:"var(--ghost)")+'" stroke-width="'+(owner?(game.lastEdge===k?6:4.5):3)+'" stroke-linecap="round"/>';
+      if(!owner) s+='<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="transparent" stroke-width="22" stroke-linecap="round" data-edge="'+t+","+r+","+c+'" style="cursor:'+(myTurn?"pointer":"default")+'"><title>'+(myTurn?"Draw this line":"Waiting for your turn")+'</title></line>';
+    }
+  });
+  for(var r=0;r<=SIZE;r++)for(var c=0;c<=SIZE;c++)
+    s+='<circle cx="'+pos(c)+'" cy="'+pos(r)+'" r="5" fill="var(--ink)"/>';
+  return s+"</svg>";
+}
+
+function render(){
+  var h="";
+  if(view==="lobby"){
+    h+=stamp()
+      +'<div class="eyebrow mono">First-class · two players · no rush · no sign-ups</div>'
+      +'<h1 class="title">Airmail Dots</h1>'
+      +'<p class="sub">Dots &amp; boxes by post, for two people far apart. One link, play whenever — the page checks the mail on its own.</p>'
+      +'<div class="twocol"><div>'
+      +'<div class="mono eyebrow" style="font-size:12px">Start a new game</div>'
+      +'<label class="lbl mono" for="nm">Your name</label>'
+      +'<input id="nm" class="inp" maxlength="14" placeholder="e.g. Sid" autocomplete="off">'
+      +'<div style="margin-top:12px"><button class="btn" data-act="new">Open the mailbag</button></div>'
+      +'</div><div>'
+      +'<div class="mono eyebrow" style="font-size:12px">Join or resume</div>'
+      +'<label class="lbl mono" for="cd">Game code</label>'
+      +'<input id="cd" class="inp" maxlength="4" placeholder="ABCD" autocomplete="off" style="text-transform:uppercase">'
+      +'<div style="margin-top:12px"><button class="btn ghost" data-act="open">Find my game</button></div>'
+      +'</div></div>'
+      +(err?'<div class="err">'+esc(err)+'</div>':"")
+      +'<hr class="hr"><p class="status">How to play: take turns drawing one line between two dots. Close the fourth side of a box and it’s yours — plus a bonus line. Most boxes when the board fills wins.</p>';
+  }
+
+  if(view==="who"&&game){
+    var seatOpen=!game.players[2];
+    h+=stamp()+'<div class="eyebrow mono">Game '+esc(code)+'</div>'
+      +'<h1 class="title">Who’s signing in?</h1>';
+    if(seatOpen){
+      h+='<p class="sub">'+esc(game.players[1].name)+' started this game and is waiting on a partner.</p>'
+        +'<label class="lbl mono" for="nm2">Your name</label>'
+        +'<input id="nm2" class="inp" maxlength="14" placeholder="e.g. Alex" autocomplete="off">'
+        +'<div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">'
+        +'<button class="btn" data-act="join2">Join as player two</button>'
+        +'<button class="btn ghost" data-act="iam1">I’m '+esc(game.players[1].name)+'</button></div>';
+    }else{
+      h+='<p class="sub">Pick your name to resume.</p><div style="display:flex;gap:10px;flex-wrap:wrap">'
+        +'<button class="btn" style="background:'+PAL[1].hex+';border-color:'+PAL[1].hex+'" data-act="iam1">I’m '+esc(game.players[1].name)+'</button>'
+        +'<button class="btn" style="background:'+PAL[2].hex+';border-color:'+PAL[2].hex+'" data-act="iam2">I’m '+esc(game.players[2].name)+'</button></div>';
+    }
+    h+=(err?'<div class="err">'+esc(err)+'</div>':"");
+  }
+
+  if(view==="game"&&game){
+    var waiting=game.status==="waiting", done=game.status==="done";
+    var s1=scoreOf(game,1), s2=scoreOf(game,2);
+    var myTurn=game.status==="playing"&&game.turn===me;
+    var other=game.players[me===1?2:1];
+    var winner=done?(s1===s2?0:(s1>s2?1:2)):null;
+    var notes=(game.notes||[]).slice().reverse().slice(0,4);
+
+    h+=stamp()
+      +'<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'
+      +'<span class="mono eyebrow">Postmark</span><span class="mono" style="font-size:24px;letter-spacing:.35em">'+esc(code)+'</span>'
+      +'<button class="btn ghost" style="padding:5px 10px;font-size:10px" data-act="copy">Copy invite link</button></div>'
+      +(info?'<p class="status seal">'+esc(info)+'</p>':"");
+
+    if(waiting){
+      h+='<h1 class="title">Awaiting your correspondent</h1>'
+        +'<p class="sub">Send your person the invite link — when they open it and sign their name, the first move is yours.</p>'
+        +'<div class="bigcode mono">'+esc(code)+'</div>'
+        +'<button class="btn big" data-act="copy">Copy invite link to share</button>'
+        +'<p class="status pulse" style="margin-top:14px">✈ Watching the skies — this page checks the mail on its own.</p>';
+    }else{
+      h+='<div class="scores">'+[1,2].map(function(p){
+        var nm=(game.players[p]&&game.players[p].name)||"…";
+        return '<div class="sc'+((game.status==="playing"&&game.turn===p)?" active":"")+'">'
+          +'<div class="mono eyebrow" style="color:'+PAL[p].hex+'">'+esc(nm)+(p===me?" (you)":"")+'</div>'
+          +'<div class="scnum" style="color:'+PAL[p].hex+'">'+(p===1?s1:s2)+'</div></div>';
+      }).join("")+'</div>';
+
+      if(done){
+        h+='<p class="status" style="font-size:16px">'+(winner
+          ?"★ "+esc(game.players[winner].name)+" takes round "+game.round+", "+Math.max(s1,s2)+"–"+Math.min(s1,s2)+"."
+          :"★ A perfect tie, "+s1+"–"+s2+". The post office demands a rematch.")+'</p>';
+      }else{
+        h+='<p class="status'+(myTurn?"":" pulse")+'">'+(myTurn
+          ?"✒ Your move — tap a gap to draw a line. Close a box and you draw again."
+          :"✈ Sealed and sent. Waiting on "+esc(other?other.name:"your partner")+" — moves appear here on their own.")+'</p>';
+      }
+
+      h+='<div class="board" id="boardwrap">'+boardSVG()+'</div>';
+
+      if(done) h+='<div style="text-align:center;margin:6px 0 4px"><button class="btn" data-act="rematch">Rematch — round '+(game.round+1)+'</button></div>';
+
+      h+='<hr class="hr"><div class="mono eyebrow" style="font-size:12px">Slip a note in the envelope</div>'
+        +'<div style="display:flex;gap:8px;margin-top:8px">'
+        +'<input id="note" class="inp" style="flex:1" maxlength="120" placeholder="Anything at all — it travels with the game">'
+        +'<button class="btn" data-act="post">Post it</button></div>'
+        +'<div class="emojis">'+["❤️","😂","😤","👀","🍀","☕","🌙","🏆"].map(function(e){
+          return '<button class="em" data-em="'+e+'" aria-label="Add '+e+'">'+e+'</button>';}).join("")+'</div>';
+
+      if(notes.length){
+        h+='<div style="margin-top:14px">'+notes.map(function(n,i){
+          var d=new Date(n.ts);
+          return '<div class="postcard'+(i===0?" seal":"")+'"><div class="pc-meta mono" style="color:'+PAL[n.from].hex+'">From '
+            +esc((game.players[n.from]&&game.players[n.from].name)||"")+' · '
+            +d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+" "
+            +d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"})
+            +'</div><div class="pc-text">'+esc(n.text)+'</div></div>';
+        }).join("")+'</div>';
+      }
+    }
+
+    h+='<hr class="hr"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'
+      +'<button class="btn ghost" style="padding:6px 12px;font-size:10px" data-act="home">← Sorting office</button>'
+      +'<span class="eyebrow mono" style="font-size:9px">Round '+game.round+' · game code '+esc(code)+'</span></div>';
+  }
+
+  if(view==="setup"){
+    h+=stamp()+'<h1 class="title">One step left</h1>'
+      +'<p class="sub">The game’s mailroom (its database) isn’t connected yet. In your Vercel dashboard: open this project → <strong>Storage</strong> → <strong>Create Database</strong> → <strong>Upstash Redis</strong> (free) → connect it, then redeploy. After that, this page just works.</p>'
+      +'<button class="btn" data-act="home">Try again</button>';
+  }
+
+  app.innerHTML=h;
+  wire();
+}
+
+/* ------------ events ------------ */
+function wire(){
+  app.querySelectorAll("[data-act]").forEach(function(el){
+    el.addEventListener("click",function(){act(el.getAttribute("data-act"));});
+  });
+  app.querySelectorAll("[data-em]").forEach(function(el){
+    el.addEventListener("click",function(){
+      var i=document.getElementById("note"); if(i){i.value+=el.getAttribute("data-em");i.focus();}
+    });
+  });
+  var note=document.getElementById("note");
+  if(note) note.addEventListener("keydown",function(e){if(e.key==="Enter")act("post");});
+  var cd=document.getElementById("cd");
+  if(cd) cd.addEventListener("keydown",function(e){if(e.key==="Enter")act("open");});
+  var bw=document.getElementById("boardwrap");
+  if(bw) bw.addEventListener("click",function(ev){
+    var t=ev.target.closest("[data-edge]"); if(!t)return;
+    var p=t.getAttribute("data-edge").split(",");
+    play(p[0],+p[1],+p[2]);
+  });
+}
+
+function copyText(txt){
+  function fb(){var ta=document.createElement("textarea");ta.value=txt;ta.style.position="fixed";ta.style.opacity="0";
+    document.body.appendChild(ta);ta.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(ta);}
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).catch(fb);}else fb();
+}
+
+function flashInfo(msg){ info=msg; render(); setTimeout(function(){ if(info===msg){info="";render();} },2500); }
+
+function play(t,r,c){
+  var next=applyMove(game,t,r,c,me);
+  if(!next)return;
+  game=next; render();
+  apiSave(code,next).catch(function(){ flashInfo("Couldn’t reach the post office — check your connection and tap the line again."); });
+}
+
+function act(a){
+  err="";
+  if(a==="new"){
+    var nm=(document.getElementById("nm").value||"").trim();
+    if(!nm){err="Sign your name first.";return render();}
+    code=makeCode(); game=newGame(nm); me=1;
+    apiSave(code,game).then(function(){
+      remember(code,1,nm); view="game"; location.hash=code; render(); startPolling();
+    }).catch(function(e){ view=e.message==="setup"?"setup":"lobby"; err="Couldn’t reach the post office. Try again."; render(); });
+    return;
+  }
+  if(a==="open"){
+    var c=(document.getElementById("cd").value||"").trim().toUpperCase();
+    if(c.length!==4){err="Enter the 4-letter game code.";return render();}
+    openCode(c); return;
+  }
+  if(a==="join2"){
+    var nm2=(document.getElementById("nm2").value||"").trim();
+    if(!nm2){err="Sign your name first.";return render();}
+    var g=Object.assign({},game,{players:{1:game.players[1],2:{name:nm2}},status:"playing",rev:game.rev+1});
+    apiSave(code,g).then(function(){
+      game=g; me=2; remember(code,2,nm2); view="game"; render(); startPolling();
+    }).catch(function(){err="Couldn’t save — try again.";render();});
+    return;
+  }
+  if(a==="iam1"){me=1;remember(code,1,game.players[1].name);view="game";render();startPolling();return;}
+  if(a==="iam2"){me=2;remember(code,2,game.players[2].name);view="game";render();startPolling();return;}
+  if(a==="copy"){copyText(inviteURL());flashInfo("Invite link copied — send it to your person.");return;}
+  if(a==="post"){
+    var inp=document.getElementById("note"), text=inp?(inp.value||"").trim():"";
+    if(!text)return;
+    var notes=(game.notes||[]).concat([{from:me,text:text.slice(0,120),ts:Date.now()}]).slice(-10);
+    var g2=Object.assign({},game,{notes:notes,rev:game.rev+1});
+    game=g2; render();
+    apiSave(code,g2).catch(function(){flashInfo("Note didn’t send — try again.");});
+    return;
+  }
+  if(a==="rematch"){
+    var g3=Object.assign({},game,{edges:{},boxes:{},lastEdge:null,status:"playing",
+      turn:game.round%2===1?2:1,round:game.round+1,rev:game.rev+1});
+    game=g3; render();
+    apiSave(code,g3).catch(function(){});
+    return;
+  }
+  if(a==="home"){
+    stopPolling(); view="lobby"; game=null; code=""; me=null; info="";
+    try{history.replaceState(null,"",location.pathname);}catch(e){}
+    render(); return;
+  }
+}
+
+function openCode(c){
+  apiGet(c).then(function(g){
+    if(!g){err="No game found at code "+c+". Check the letters?";view="lobby";return render();}
+    code=c; game=g;
+    var saved=recall();
+    if(saved&&saved.code===c&&(saved.me===1||saved.me===2)&&game.players[saved.me]){
+      me=saved.me; view="game"; render(); startPolling();
+    }else{
+      view="who"; render(); startPolling();
+    }
+  }).catch(function(e){
+    view=e.message==="setup"?"setup":"lobby";
+    if(view==="lobby")err="Couldn’t reach the post office. Check your connection.";
+    render();
+  });
+}
+
+/* ------------ boot ------------ */
+document.addEventListener("visibilitychange",function(){
+  if(!document.hidden&&code){ apiGet(code).then(function(g){ if(g&&(!game||g.rev>game.rev)){game=g;render();} }).catch(function(){}); }
+});
+var hash=(location.hash||"").replace("#","").toUpperCase();
+if(/^[A-Z0-9]{4}$/.test(hash)){ openCode(hash); } else { render(); }
+})();
+</script>
+</body>
+</html>
