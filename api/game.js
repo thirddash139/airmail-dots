@@ -1,60 +1,63 @@
-// Airmail Dots — game state API (Vercel serverless function, zero dependencies)
-// Storage: Upstash Redis via its REST API. Add it in Vercel: Project → Storage →
-// Create Database → Upstash Redis (free). Env vars are injected automatically.
+// Airmail Dots — game state API (Vercel serverless function).
+// Talks to a standard Redis database over its redis:// connection string,
+// which is what the Vercel "Redis" (Redis Cloud) integration provides as
+// the REDIS_URL environment variable. Connect the database in Vercel:
+// Project → Storage. No manual variables needed.
+
+import { createClient } from "redis";
 
 const TTL_SECONDS = 60 * 60 * 24 * 90; // games kept 90 days after last move
 const CODE_RE = /^[A-Z0-9]{4}$/;
 const MAX_BYTES = 24_000;
 
-function redisCreds() {
+// Find the redis:// connection string regardless of what it's named.
+function redisUrl() {
   const env = process.env;
-
-  // Try the well-known names first, regardless of integration version.
-  const knownUrls = ["KV_REST_API_URL", "UPSTASH_REDIS_REST_URL", "REDIS_REST_API_URL"];
-  const knownTokens = ["KV_REST_API_TOKEN", "UPSTASH_REDIS_REST_TOKEN", "REDIS_REST_API_TOKEN"];
-
-  let url = knownUrls.map((n) => env[n]).find(Boolean) || null;
-  let token = knownTokens.map((n) => env[n]).find(Boolean) || null;
-
-  // Fallback: the Vercel "Custom Prefix" can rename these (e.g. STORAGE_*).
-  // Find the Upstash REST endpoint (an https URL pointing at upstash.io) and a
-  // matching write token (a TOKEN var that is not the read-only one).
-  if (!url) {
-    const k = Object.keys(env).find(
-      (key) => /URL$/.test(key) && /^https:\/\//.test(env[key] || "") && /upstash/i.test(env[key] || "")
-    );
-    if (k) url = env[k];
+  const known = ["REDIS_URL", "KV_URL", "STORAGE_URL", "STORAGE_REDIS_URL", "DATABASE_URL"];
+  let u = known.map((n) => env[n]).find(Boolean) || null;
+  if (!u) {
+    const k = Object.keys(env).find((key) => /^rediss?:\/\//.test(env[key] || ""));
+    if (k) u = env[k];
   }
-  if (!token) {
-    const k = Object.keys(env).find(
-      (key) => /TOKEN$/.test(key) && !/READ[_-]?ONLY/i.test(key) && (env[key] || "").length > 20
-    );
-    if (k) token = env[k];
-  }
+  return u || null;
+}
 
-  return url && token ? { url: String(url).replace(/\/$/, ""), token } : null;
+// Reuse one client across warm invocations.
+let client = null;
+async function getClient() {
+  const url = redisUrl();
+  if (!url) return null;
+  if (client && client.isOpen) return client;
+  client = createClient({ url });
+  client.on("error", () => {}); // don't crash the function on transient blips
+  await client.connect();
+  return client;
 }
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
-  const creds = redisCreds();
-  if (!creds) {
+  let redis;
+  try {
+    redis = await getClient();
+  } catch (e) {
+    redis = null;
+  }
+  if (!redis) {
     return res.status(503).json({
       error: "storage_not_configured",
-      hint: "In Vercel: Project → Storage → Create Database → Upstash Redis, then redeploy.",
+      hint: "In Vercel: Project → Storage → connect a Redis database, then redeploy.",
     });
   }
-  const auth = { Authorization: `Bearer ${creds.token}` };
+
   const key = (code) => `airmail:${code}`;
 
   try {
     if (req.method === "GET") {
       const code = String(req.query.code || "").toUpperCase();
       if (!CODE_RE.test(code)) return res.status(400).json({ error: "bad_code" });
-      const r = await fetch(`${creds.url}/get/${key(code)}`, { headers: auth });
-      const j = await r.json();
-      return res.status(200).json({ state: j.result ? JSON.parse(j.result) : null });
+      const val = await redis.get(key(code));
+      return res.status(200).json({ state: val ? JSON.parse(val) : null });
     }
 
     if (req.method === "POST") {
@@ -66,13 +69,7 @@ export default async function handler(req, res) {
       }
       const payload = JSON.stringify(state);
       if (payload.length > MAX_BYTES) return res.status(413).json({ error: "too_large" });
-
-      const r = await fetch(`${creds.url}/set/${key(code)}?EX=${TTL_SECONDS}`, {
-        method: "POST",
-        headers: auth,
-        body: payload,
-      });
-      if (!r.ok) return res.status(502).json({ error: "storage_write_failed" });
+      await redis.set(key(code), payload, { EX: TTL_SECONDS });
       return res.status(200).json({ ok: true });
     }
 
