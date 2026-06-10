@@ -7,15 +7,32 @@ const CODE_RE = /^[A-Z0-9]{4}$/;
 const MAX_BYTES = 24_000;
 
 function redisCreds() {
-  const url =
-    process.env.KV_REST_API_URL ||
-    process.env.UPSTASH_REDIS_REST_URL ||
-    process.env.REDIS_REST_API_URL;
-  const token =
-    process.env.KV_REST_API_TOKEN ||
-    process.env.UPSTASH_REDIS_REST_TOKEN ||
-    process.env.REDIS_REST_API_TOKEN;
-  return url && token ? { url: url.replace(/\/$/, ""), token } : null;
+  const env = process.env;
+
+  // Try the well-known names first, regardless of integration version.
+  const knownUrls = ["KV_REST_API_URL", "UPSTASH_REDIS_REST_URL", "REDIS_REST_API_URL"];
+  const knownTokens = ["KV_REST_API_TOKEN", "UPSTASH_REDIS_REST_TOKEN", "REDIS_REST_API_TOKEN"];
+
+  let url = knownUrls.map((n) => env[n]).find(Boolean) || null;
+  let token = knownTokens.map((n) => env[n]).find(Boolean) || null;
+
+  // Fallback: the Vercel "Custom Prefix" can rename these (e.g. STORAGE_*).
+  // Find the Upstash REST endpoint (an https URL pointing at upstash.io) and a
+  // matching write token (a TOKEN var that is not the read-only one).
+  if (!url) {
+    const k = Object.keys(env).find(
+      (key) => /URL$/.test(key) && /^https:\/\//.test(env[key] || "") && /upstash/i.test(env[key] || "")
+    );
+    if (k) url = env[k];
+  }
+  if (!token) {
+    const k = Object.keys(env).find(
+      (key) => /TOKEN$/.test(key) && !/READ[_-]?ONLY/i.test(key) && (env[key] || "").length > 20
+    );
+    if (k) token = env[k];
+  }
+
+  return url && token ? { url: String(url).replace(/\/$/, ""), token } : null;
 }
 
 export default async function handler(req, res) {
